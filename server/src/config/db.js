@@ -1,13 +1,22 @@
-const mongoose = require('mongoose');
+const { getSupabaseAdmin } = require('./supabase');
 
-async function connectDB(uri) {
+let isChecked = false;
+
+async function connectDB() {
+  if (isChecked) return;
+
   try {
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 10000,
-    });
-    console.log('MongoDB connected');
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase.from('users').select('id').limit(1);
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    isChecked = true;
+    console.log('Supabase connected');
   } catch (err) {
-    console.error('MongoDB connection error:', err.message);
+    console.error('Supabase connection error:', err.message || err);
     process.exit(1);
   }
 }

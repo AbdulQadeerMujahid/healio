@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import * as Lucide from "lucide";
 import Login from "./pages/Login";
 import PatientDashboard from "./pages/PatientDashboard";
 import DoctorDashboard from "./pages/DoctorDashboard";
@@ -10,8 +11,72 @@ import Messages from "./pages/Messages";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import { NotificationProvider } from "./context/NotificationContext";
-import { LanguageProvider } from "./context/LanguageContext";
+import { useLanguage } from "./context/LanguageContext";
 import NotificationsPage from "./pages/Notifications";
+
+const toPascalCase = (name = "") =>
+  String(name)
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
+
+const iconAlias = {
+  "layout-dashboard": "LayoutDashboard",
+  "message-circle": "MessageCircle",
+  "file-text": "FileText",
+  "calendar-plus": "CalendarPlus",
+  "heart-pulse": "HeartPulse",
+  "folder-open": "FolderOpen",
+  "external-link": "ExternalLink",
+  "plus-circle": "PlusCircle",
+  "x-circle": "XCircle",
+  "calendar-x": "CalendarX",
+  "trash-2": "Trash2",
+  "user-plus": "UserPlus",
+  "arrow-left": "ArrowLeft",
+  "check-circle": "CheckCircle",
+  "clipboard-list": "ClipboardList",
+  "bar-chart": "BarChart3",
+  "pie-chart": "PieChart",
+  "log-in": "LogIn",
+  "log-out": "LogOut",
+};
+
+const buildSvgMarkup = (iconName) => {
+  const iconKey = iconAlias[iconName] || toPascalCase(iconName);
+  const iconNode = Lucide[iconKey];
+  if (!Array.isArray(iconNode)) return "";
+
+  const children = iconNode
+    .map(([tag, attrs]) => {
+      const attrsString = Object.entries(attrs || {})
+        .map(([k, v]) => `${k}="${String(v)}"`)
+        .join(" ");
+      return `<${tag} ${attrsString}></${tag}>`;
+    })
+    .join("");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-${iconName}">${children}</svg>`;
+};
+
+const renderLucideIconsInPlace = () => {
+  if (typeof document === "undefined") return;
+
+  const nodes = document.querySelectorAll("i[data-lucide]");
+  nodes.forEach((node) => {
+    const iconName = node.getAttribute("data-lucide") || "";
+    const signature = `${iconName}|1.9`;
+    if (node.getAttribute("data-lucide-rendered") === signature) return;
+
+    const svg = buildSvgMarkup(iconName);
+    if (!svg) return;
+
+    node.innerHTML = svg;
+    node.setAttribute("data-lucide-rendered", signature);
+    node.setAttribute("aria-hidden", "true");
+  });
+};
 
 export default function App() {
   const [user, setUserState] = useState(() => {
@@ -37,6 +102,7 @@ export default function App() {
   };
   
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "system");
+  const { lang } = useLanguage();
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -59,6 +125,21 @@ export default function App() {
       return () => media.removeEventListener('change', apply);
     }
   }, [theme]);
+
+  useEffect(() => {
+    renderLucideIconsInPlace();
+
+    const observer = new MutationObserver(() => {
+      renderLucideIconsInPlace();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     console.log('🚦 Route check:', {
@@ -110,18 +191,60 @@ export default function App() {
   const cycleTheme = () => {
     setTheme((t) => (t === 'light' ? 'dark' : t === 'dark' ? 'system' : 'light'));
   };
-  const themeIcon = theme === 'system' ? 'Laptop' : theme === 'dark' ? 'Moon' : 'Sun';
+  const themeIcon = theme === 'system' ? 'laptop' : theme === 'dark' ? 'moon' : 'sun';
   const themeLabel = theme === 'system' ? 'System' : theme === 'dark' ? 'Dark' : 'Light';
 
-  const navigation = [
-    { name: 'Dashboard', href: user?.role === 'doctor' ? '/doctor' : '/patient', icon: 'LayoutDashboard' },
-    { name: 'Appointments', href: user?.role === 'doctor' ? '/doctor/appointments' : '/patient/appointments', icon: 'Calendar' },
-    { name: 'Messages', href: user?.role === 'doctor' ? '/doctor/messages' : '/patient/messages', icon: 'MessageCircle' },
-    { name: 'Reports', href: user?.role === 'doctor' ? '/doctor/reports' : '/patient/reports', icon: 'FileText' },
-    user?.role === 'doctor' ? { name: 'Notes', href: '/doctor/notes', icon: 'NotebookPen' } : null,
-    { name: 'Notifications', href: user?.role === 'doctor' ? '/doctor/notifications' : '/patient/notifications', icon: 'Bell' },
-    { name: 'Settings', href: user?.role === 'doctor' ? '/doctor/settings' : '/patient/settings', icon: 'Settings' },
-  ].filter(Boolean);
+  const labels = {
+    en: {
+      dashboard: 'Dashboard',
+      appointments: 'Appointments',
+      messages: 'Messages',
+      reports: 'Reports',
+      notes: 'Notes',
+      notifications: 'Notifications',
+      settings: 'Settings',
+      logout: 'Logout',
+      login: 'Login',
+      guest: 'Guest',
+    },
+    hi: {
+      dashboard: 'डैशबोर्ड',
+      appointments: 'अपॉइंटमेंट्स',
+      messages: 'संदेश',
+      reports: 'रिपोर्ट्स',
+      notes: 'नोट्स',
+      notifications: 'सूचनाएं',
+      settings: 'सेटिंग्स',
+      logout: 'लॉगआउट',
+      login: 'लॉगिन',
+      guest: 'अतिथि',
+    },
+    mr: {
+      dashboard: 'डॅशबोर्ड',
+      appointments: 'अपॉइंटमेंट्स',
+      messages: 'संदेश',
+      reports: 'अहवाल',
+      notes: 'नोंदी',
+      notifications: 'सूचना',
+      settings: 'सेटिंग्स',
+      logout: 'लॉगआउट',
+      login: 'लॉगिन',
+      guest: 'अतिथी',
+    },
+  };
+  const tr = labels[lang] || labels.en;
+
+  const baseNavigation = [
+    { name: tr.dashboard, href: user?.role === 'doctor' ? '/doctor' : '/patient', icon: 'layout-dashboard' },
+    { name: tr.appointments, href: user?.role === 'doctor' ? '/doctor/appointments' : '/patient/appointments', icon: 'calendar-days' },
+    { name: tr.messages, href: user?.role === 'doctor' ? '/doctor/messages' : '/patient/messages', icon: 'messages-square' },
+    { name: tr.reports, href: user?.role === 'doctor' ? '/doctor/reports' : '/patient/reports', icon: 'files' },
+    user?.role === 'doctor' ? { name: tr.notes, href: '/doctor/notes', icon: 'notebook-pen' } : null,
+    { name: tr.notifications, href: user?.role === 'doctor' ? '/doctor/notifications' : '/patient/notifications', icon: 'bell-ring' },
+    { name: tr.settings, href: user?.role === 'doctor' ? '/doctor/settings' : '/patient/settings', icon: 'sliders-horizontal' },
+  ];
+
+  const navigation = baseNavigation.filter(Boolean);
 
   const isActiveRoute = (href) => {
     return location.pathname === href;
@@ -130,7 +253,6 @@ export default function App() {
   const isDarkMode = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   return (
-    <LanguageProvider>
       <NotificationProvider user={user}>
         <div className="flex h-screen dashboard-bg">
       {/* Sidebar */}
@@ -202,7 +324,7 @@ export default function App() {
               <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-2">
                 <i data-lucide="user" className="w-4 h-4 text-gray-500 dark:text-gray-400"></i>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-300 text-center">Guest</p>
+              <p className="text-xs text-gray-500 dark:text-gray-300 text-center">{tr.guest}</p>
             </div>
           )}
 
@@ -212,7 +334,7 @@ export default function App() {
               className="w-full btn-primary text-sm"
             >
               <i data-lucide="log-out" className="w-4 h-4 mr-2"></i>
-              Logout
+              {tr.logout}
             </button>
           )}
 
@@ -222,7 +344,7 @@ export default function App() {
               className="w-full btn-primary text-sm"
             >
               <i data-lucide="log-in" className="w-4 h-4 mr-2"></i>
-              Login
+              {tr.login}
             </button>
           )}
         </div>
@@ -253,6 +375,5 @@ export default function App() {
         </div>
         </div>
       </NotificationProvider>
-    </LanguageProvider>
   );
 }

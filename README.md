@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Health Connect - Smart Healthcare Platform
 
 A modern full-stack healthcare application with real-time appointments, built with React, Node.js, MongoDB, and Socket.IO.
@@ -151,3 +152,7 @@ vercel --prod
 - ✅ **Professional healthcare dashboard**
 - ✅ **Responsive design** for all devices
 - ✅ **Serverless architecture** optimized for Vercel
+=======
+# healio
+Health Tech based project 
+>>>>>>> 2b37aa19d47657be4db350e4b15bd92a7ccf3032

@@ -1,19 +1,46 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const { getSupabaseAdmin } = require('../config/supabase');
+const { mapUser } = require('../utils/formatters');
 
 function signToken(user) {
-  return jwt.sign({ id: user._id, role: user.role, name: user.name }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id, role: user.role, name: user.name }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
 exports.register = async (req, res) => {
   try {
+    const supabase = getSupabaseAdmin();
     const { name, email, password } = req.body;
+
     if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields' });
-    const existing = await User.findOne({ email });
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
     if (existing) return res.status(409).json({ message: 'Email already in use' });
-    const user = await User.create({ name, email, password, role: 'patient' });
+
+    const password_hash = await bcrypt.hash(password, 10);
+    const { data: inserted, error } = await supabase
+      .from('users')
+      .insert({ name, email: normalizedEmail, password_hash, role: 'patient' })
+      .select('id, name, email, role, specialization, experience, created_at, updated_at')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ message: 'Email already in use' });
+      }
+      throw error;
+    }
+
+    const user = mapUser(inserted);
     const token = signToken(user);
-    res.status(201).json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+    res.status(201).json({ token, user: { id: user.id, _id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -22,65 +49,103 @@ exports.register = async (req, res) => {
 
 // Separate doctor registration with specialization
 exports.registerDoctor = async (req, res) => {
-  console.log('🏥 ========== DOCTOR REGISTRATION ENDPOINT CALLED ==========');
-  console.log('📋 Request body:', req.body);
-  
   try {
+    const supabase = getSupabaseAdmin();
     const { name, email, password, specialization } = req.body;
-    console.log('📝 Extracted data:', { name, email, specialization });
-    
+
     if (!name || !email || !password || !specialization) {
-      console.log('❌ Missing fields');
       return res.status(400).json({ message: 'Missing fields' });
     }
-    
-    const existing = await User.findOne({ email });
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
     if (existing) {
-      console.log('❌ Email already exists:', email);
       return res.status(409).json({ message: 'Email already in use' });
     }
-    
-    console.log('✅ Creating doctor user with role: "doctor"');
-    const user = await User.create({ name, email, password, role: 'doctor', specialization });
-    
-    console.log('✅ Doctor user created successfully!');
-    console.log('👤 User ID:', user._id);
-    console.log('👤 User Name:', user.name);
-    console.log('👤 User Email:', user.email);
-    console.log('👤 User Role:', user.role, '← SHOULD BE "doctor"');
-    console.log('🩺 Specialization:', user.specialization);
-    
+
+    const password_hash = await bcrypt.hash(password, 10);
+    const { data: inserted, error } = await supabase
+      .from('users')
+      .insert({
+        name,
+        email: normalizedEmail,
+        password_hash,
+        role: 'doctor',
+        specialization,
+      })
+      .select('id, name, email, role, specialization, experience, created_at, updated_at')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({ message: 'Email already in use' });
+      }
+      throw error;
+    }
+
+    const user = mapUser(inserted);
     const token = signToken(user);
     const responseData = { 
       token, 
       user: { 
-        id: user._id, 
+        id: user.id,
+        _id: user._id,
         name: user.name, 
         email: user.email, 
         role: user.role, 
         specialization: user.specialization 
       } 
     };
-    
-    console.log('📦 Sending response:', responseData.user);
-    console.log('🏥 ========== DOCTOR REGISTRATION COMPLETE ==========');
-    
+
     res.status(201).json(responseData);
   } catch (err) {
-    console.error('❌ DOCTOR REGISTRATION ERROR:', err);
+    console.error('Doctor registration error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
 exports.login = async (req, res) => {
   try {
+    const supabase = getSupabaseAdmin();
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
+
+    const normalizedEmail = String(email || '').toLowerCase().trim();
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, name, email, role, specialization, password_hash, experience, created_at, updated_at')
+      .eq('email', normalizedEmail)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Login query error:', error);
+      return res.status(500).json({ message: 'Authentication service unavailable' });
+    }
+
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    const ok = await user.matchPassword(password);
+
+    const ok = await bcrypt.compare(password || '', user.password_hash || '');
     if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
-    const token = signToken(user);
-    res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role, specialization: user.specialization } });
+
+    const mappedUser = mapUser(user);
+    const token = signToken(mappedUser);
+    res.json({
+      token,
+      user: {
+        id: mappedUser.id,
+        _id: mappedUser._id,
+        name: mappedUser.name,
+        email: mappedUser.email,
+        role: mappedUser.role,
+        specialization: mappedUser.specialization,
+      },
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -89,8 +154,18 @@ exports.login = async (req, res) => {
 
 exports.me = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
-    res.json(user);
+    const supabase = getSupabaseAdmin();
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, name, email, role, specialization, experience, created_at, updated_at')
+      .eq('id', req.user.id)
+      .maybeSingle();
+
+    if (error || !user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json(mapUser(user));
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }

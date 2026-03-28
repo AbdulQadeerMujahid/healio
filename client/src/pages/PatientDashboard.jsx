@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useLanguage } from "../context/LanguageContext";
 import Tesseract from "tesseract.js";
-import Chart from "chart.js/auto";
 
 // Auto-detect API URL for both development and production
 const getApiUrl = () => {
@@ -36,14 +35,17 @@ export default function PatientDashboard() {
   const [lastUpdate, setLastUpdate] = useState(new Date().toISOString());
   const [openCall, setOpenCall] = useState(null); // For video call modal
 
-  const heartChartRef = useRef(null);
+  const [latestHeartRate, setLatestHeartRate] = useState(80);
+  const [latestTemperature, setLatestTemperature] = useState(36.8);
+  const [vitalsStatus, setVitalsStatus] = useState("NORMAL");
 
   const i18n = {
     en: {
       patient_dashboard: "Patient Dashboard",
-      welcome: "Welcome back! Manage your health appointments and track your vitals.",
+      welcome: (name) => `Welcome ${name || 'Patient'}! Book appointments and manage your health.`,
       book_appointment: "Book Appointment",
       select_doctor: "Select Doctor",
+      appointment_datetime: "Appointment Date & Time",
       reason: "Reason for visit",
       age: "Age",
       weight: "Weight (kg)",
@@ -54,6 +56,8 @@ export default function PatientDashboard() {
       current_appointments: "Current Appointments",
       history: "Appointment History",
       heart_rate: "Heart Rate Monitor",
+      latest_heart_rate: "Latest Heart Rate",
+      current_temperature: "Current Temperature",
       no_current: "No current appointments.",
       no_history: "No appointment history yet.",
       language: "Language",
@@ -63,12 +67,32 @@ export default function PatientDashboard() {
       no_notifications: "No notifications",
       mark_all_read: "Mark all read",
       view_messages: "View conversation",
+      realtime_updated: "Your appointment was updated in real-time.",
+      requested_success: "Appointment requested successfully.",
+      failed: "Failed",
+      network_error: "Network error occurred",
+      no_doctors_found: "No doctors found. Please create a doctor account first.",
+      doctors_available: (n) => `${n} doctor(s) available`,
+      doctor_fallback: "Doctor",
+      status_pending: "Pending",
+      status_rescheduled: "Rescheduled",
+      status_accepted: "Accepted",
+      status_completed: "Completed",
+      status_declined: "Declined",
+      join_video_call: "Join Video Call",
+      join_meeting: "Join Meeting",
+      ocr_placeholder: "OCR text will appear here...",
+      preview_alt: "Preview",
+      video_call_with: (name) => `Video Call with Dr. ${name || 'Doctor'}`,
+      video_call_title: "Video Call",
+      call_close_hint: "The call will be ended when you close this window",
     },
     hi: {
       patient_dashboard: "रोगी डैशबोर्ड",
-      welcome: "वापसी पर स्वागत है! अपनी अपॉइंटमेंट्स और सेहत की निगरानी करें।",
+      welcome: (name) => `${name || 'मरीज'} जी, स्वागत है! अपॉइंटमेंट बुक करें और अपनी सेहत संभालें।`,
       book_appointment: "अपॉइंटमेंट बुक करें",
       select_doctor: "डॉक्टर चुनें",
+      appointment_datetime: "अपॉइंटमेंट दिनांक और समय",
       reason: "मुलाकात का कारण",
       age: "उम्र",
       weight: "वज़न (किग्रा)",
@@ -79,6 +103,8 @@ export default function PatientDashboard() {
       current_appointments: "वर्तमान अपॉइंटमेंट्स",
       history: "अपॉइंटमेंट इतिहास",
       heart_rate: "हार्ट रेट मॉनिटर",
+      latest_heart_rate: "नवीनतम हार्ट रेट",
+      current_temperature: "वर्तमान तापमान",
       no_current: "कोई वर्तमान अपॉइंटमेंट नहीं।",
       no_history: "अभी तक कोई इतिहास नहीं।",
       language: "भाषा",
@@ -88,12 +114,32 @@ export default function PatientDashboard() {
       no_notifications: "कोई सूचना नहीं",
       mark_all_read: "सभी पढ़ा चिह्नित करें",
       view_messages: "संदेश देखें",
+      realtime_updated: "आपकी अपॉइंटमेंट रियल-टाइम में अपडेट हुई है।",
+      requested_success: "अपॉइंटमेंट सफलतापूर्वक अनुरोधित हुई।",
+      failed: "विफल",
+      network_error: "नेटवर्क त्रुटि हुई",
+      no_doctors_found: "कोई डॉक्टर नहीं मिला। कृपया पहले डॉक्टर अकाउंट बनाएं।",
+      doctors_available: (n) => `${n} डॉक्टर उपलब्ध`,
+      doctor_fallback: "डॉक्टर",
+      status_pending: "लंबित",
+      status_rescheduled: "रीशेड्यूल",
+      status_accepted: "स्वीकृत",
+      status_completed: "पूर्ण",
+      status_declined: "अस्वीकृत",
+      join_video_call: "वीडियो कॉल जॉइन करें",
+      join_meeting: "मीटिंग जॉइन करें",
+      ocr_placeholder: "OCR टेक्स्ट यहां दिखाई देगा...",
+      preview_alt: "पूर्वावलोकन",
+      video_call_with: (name) => `डॉ. ${name || 'डॉक्टर'} के साथ वीडियो कॉल`,
+      video_call_title: "वीडियो कॉल",
+      call_close_hint: "यह विंडो बंद करने पर कॉल समाप्त हो जाएगी",
     },
     mr: {
       patient_dashboard: "रुग्ण डॅशबोर्ड",
-      welcome: "परत स्वागत! तुमच्या अपॉइंटमेंट्स आणि आरोग्याची नोंद ठेवा.",
+      welcome: (name) => `${name || 'रुग्ण'} सर, स्वागत आहे! अपॉइंटमेंट बुक करा आणि आरोग्य सांभाळा।`,
       book_appointment: "अपॉइंटमेंट बुक करा",
       select_doctor: "डॉक्टर निवडा",
+      appointment_datetime: "अपॉइंटमेंट दिनांक आणि वेळ",
       reason: "भेटीचे कारण",
       age: "वय",
       weight: "वजन (किलो)",
@@ -104,6 +150,8 @@ export default function PatientDashboard() {
       current_appointments: "सध्याच्या अपॉइंटमेंट्स",
       history: "अपॉइंटमेंट इतिहास",
       heart_rate: "हार्ट रेट मॉनिटर",
+      latest_heart_rate: "नवीनतम हार्ट रेट",
+      current_temperature: "सध्याचे तापमान",
       no_current: "सध्या कोणतीही अपॉइंटमेंट नाही.",
       no_history: "अजून इतिहास नाही.",
       language: "भाषा",
@@ -113,6 +161,25 @@ export default function PatientDashboard() {
       no_notifications: "कोणत्याही सूचना नाहीत",
       mark_all_read: "सर्व वाचले म्हणून चिन्हांकित करा",
       view_messages: "चॅट पहा",
+      realtime_updated: "तुमची अपॉइंटमेंट रिअल-टाइममध्ये अपडेट झाली आहे.",
+      requested_success: "अपॉइंटमेंट यशस्वीरित्या नोंदली गेली.",
+      failed: "अयशस्वी",
+      network_error: "नेटवर्क त्रुटी झाली",
+      no_doctors_found: "डॉक्टर सापडले नाहीत. कृपया आधी डॉक्टर खाते तयार करा.",
+      doctors_available: (n) => `${n} डॉक्टर उपलब्ध`,
+      doctor_fallback: "डॉक्टर",
+      status_pending: "प्रलंबित",
+      status_rescheduled: "पुन्हा वेळ ठरवले",
+      status_accepted: "स्वीकारले",
+      status_completed: "पूर्ण",
+      status_declined: "नाकारले",
+      join_video_call: "व्हिडिओ कॉलमध्ये सामील व्हा",
+      join_meeting: "मीटिंग जॉइन करा",
+      ocr_placeholder: "OCR मजकूर येथे दिसेल...",
+      preview_alt: "पूर्वावलोकन",
+      video_call_with: (name) => `डॉ. ${name || 'डॉक्टर'} सोबत व्हिडिओ कॉल`,
+      video_call_title: "व्हिडिओ कॉल",
+      call_close_hint: "ही विंडो बंद केल्यावर कॉल समाप्त होईल",
     },
   };
 
@@ -120,6 +187,11 @@ export default function PatientDashboard() {
     const val = i18n[lang]?.[key];
     if (typeof val === "function") return val(...args);
     return val || i18n.en[key] || key;
+  };
+
+  const translateStatus = (status) => {
+    const translated = t(`status_${status}`);
+    return translated === `status_${status}` ? status : translated;
   };
 
   // Fetch data
@@ -152,6 +224,49 @@ export default function PatientDashboard() {
     }
   };
 
+  // Real-time Vitals via Socket.IO
+  useEffect(() => {
+    let socket;
+    let hasAlerted = false; // Prevent spamming alerts
+    let isMounted = true;
+
+    import("socket.io-client").then(({ io }) => {
+      if (!isMounted) return;
+      
+      // Connect to the base API URL (e.g., http://192.168.0.115:5000)
+      const socketUrl = API.includes('/api') ? API.replace('/api', '') : "http://192.168.0.115:5000";
+      socket = io(socketUrl);
+      
+      socket.on("connect", () => {
+        console.log("🟢 Connected to live Vitals Stream");
+      });
+
+      socket.on("vitalsUpdate", (data) => {
+        console.log("⚡ Live Update Received:", data);
+        
+        const isAlertState = Number(data.bpm) > 100 || data.status === "ALERT";
+        setLatestTemperature(data.temperature);
+        setLatestHeartRate(data.bpm);
+        setVitalsStatus(isAlertState ? "ALERT" : "NORMAL");
+        
+        // Bonus: Alert popup logic mapped
+        if (isAlertState && !hasAlerted) {
+          hasAlerted = true; // Lock alert
+          setTimeout(() => {
+             alert(`⚠️ HEALTH ALERT:\nBPM: ${data.bpm}\nTemp: ${data.temperature}°C\nStatus: ${data.status}\n\nPlease take immediate precautions!`);
+          }, 100); 
+        } else if (!isAlertState) {
+          hasAlerted = false; // reset alert
+        }
+      });
+    });
+
+    return () => {
+      isMounted = false;
+      if (socket) socket.disconnect();
+    };
+  }, [API]);
+
   // Polling for updates (replaces Socket.IO)
   useEffect(() => {
     fetchData(); // Initial fetch
@@ -181,7 +296,7 @@ export default function PatientDashboard() {
             });
 
             if (pollData.appointments.some(a => a.patient?._id === user()?.id)) {
-              setMessage("Your appointment was updated in real-time.");
+              setMessage(t('realtime_updated'));
               setTimeout(() => setMessage(""), 3000);
             }
           }
@@ -195,44 +310,6 @@ export default function PatientDashboard() {
 
     return () => clearInterval(pollInterval);
   }, [lastUpdate, lang]);
-
-  // Chart setup
-  useEffect(() => {
-    if (!heartChartRef.current) return;
-    const ctx = heartChartRef.current.getContext("2d");
-    const chart = new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: ["10:00", "10:15", "10:30", "10:45", "11:00"],
-        datasets: [
-          {
-            label: "Heart Rate (BPM)",
-            data: [72, 75, 78, 76, 80],
-            borderColor: "#0d9488",
-            backgroundColor: "rgba(13, 148, 136, 0.1)",
-            tension: 0.4,
-            fill: true,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: {
-            grid: { color: "#f3f4f6" },
-            ticks: { color: "#6b7280" }
-          },
-          x: {
-            grid: { color: "#f3f4f6" },
-            ticks: { color: "#6b7280" }
-          }
-        }
-      },
-    });
-
-    return () => chart.destroy();
-  }, []);
 
   // File handling
   const handleFileChange = (e) => {
@@ -286,7 +363,7 @@ export default function PatientDashboard() {
       if (res.ok) {
         const data = await res.json();
         setAppointments(prev => [data, ...prev]);
-        setMessage("Appointment requested successfully.");
+        setMessage(t('requested_success'));
         setForm({
           doctorId: "",
           reason: "",
@@ -299,10 +376,10 @@ export default function PatientDashboard() {
         fetchData();
       } else {
         const errorData = await res.json();
-        setMessage(errorData.message || "Failed");
+        setMessage(errorData.message || t('failed'));
       }
     } catch (error) {
-      setMessage("Network error occurred");
+      setMessage(t('network_error'));
     }
   };
 
@@ -335,10 +412,10 @@ export default function PatientDashboard() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between" data-aos="fade-down">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('patient_dashboard')}</h1>
-          <p className="text-gray-600 dark:text-slate-300 mt-1">Welcome {user()?.name}! Book appointments and manage your health.</p>
+          <p className="text-gray-600 dark:text-slate-300 mt-1">{t('welcome', user()?.name)}</p>
         </div>
 
         {/* Language Selector */}
@@ -359,23 +436,55 @@ export default function PatientDashboard() {
           >
             हिं
           </button>
+          <button
+            onClick={() => setLang("mr")}
+            className={`px-3 py-1 rounded ${
+              lang === "mr" ? "bg-teal-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-slate-700 dark:text-slate-200"
+            }`}
+          >
+            म
+          </button>
         </div>
       </div>
 
       {message && (
         <div
           className="p-4 bg-teal-50 dark:bg-teal-900/30 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 rounded-lg"
-          data-aos="fade-down"
         >
           {message}
         </div>
       )}
 
+      {/* Health Vitals Section */}
+      <div className={`card card-hover ${vitalsStatus === 'ALERT' ? 'border-2 border-red-500' : ''}`}>
+        <div className="flex items-center space-x-2 mb-4">
+          <i data-lucide="heart" className={`w-5 h-5 ${vitalsStatus === 'ALERT' ? 'text-red-600 animate-pulse' : 'text-teal-600'}`}></i>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+            {t('heart_rate')} {vitalsStatus === 'ALERT' && <span className="text-red-500 text-sm ml-2">(ALERT)</span>}
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={`rounded-lg border px-4 py-3 ${vitalsStatus === 'ALERT' ? 'border-red-500 bg-red-50 dark:bg-red-900/40 text-red-800' : 'border-teal-100 dark:border-teal-900/40 bg-teal-50 dark:bg-teal-900/20'}`}>
+            <p className={`text-xs uppercase tracking-wide ${vitalsStatus === 'ALERT' ? 'text-red-700 dark:text-red-300' : 'text-teal-700 dark:text-teal-300'}`}>
+              {t('latest_heart_rate')}
+            </p>
+            <p className={`text-3xl font-bold ${vitalsStatus === 'ALERT' ? 'text-red-800 dark:text-red-200 animate-pulse' : 'text-teal-800 dark:text-teal-200'}`}>{latestHeartRate} BPM</p>
+          </div>
+          <div className={`rounded-lg border px-4 py-3 ${vitalsStatus === 'ALERT' ? 'border-red-500 bg-red-50 dark:bg-red-900/40 text-red-800' : 'border-orange-100 dark:border-orange-900/40 bg-orange-50 dark:bg-orange-900/20'}`}>
+            <p className={`text-xs uppercase tracking-wide ${vitalsStatus === 'ALERT' ? 'text-red-700 dark:text-red-300' : 'text-orange-700 dark:text-orange-300'}`}>
+              {t('current_temperature')}
+            </p>
+            <p className={`text-3xl font-bold ${vitalsStatus === 'ALERT' ? 'text-red-800 dark:text-red-200 animate-pulse' : 'text-orange-800 dark:text-orange-200'}`}>{latestTemperature}°C</p>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column - Booking and Upload */}
         <div className="lg:col-span-2 space-y-8">
           {/* Book Appointment Card */}
-          <div className="card card-hover" data-aos="fade-up">
+          <div className="card card-hover">
             <div className="flex items-center space-x-2 mb-6">
               <i data-lucide="calendar-plus" className="w-5 h-5 text-teal-600"></i>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('book_appointment')}</h2>
@@ -401,16 +510,16 @@ export default function PatientDashboard() {
                     ))}
                   </select>
                   {doctors.length === 0 && (
-                    <p className="mt-2 text-sm text-red-600 dark:text-red-400">⚠️ No doctors found. Please create a doctor account first.</p>
+                    <p className="mt-2 text-sm text-red-600 dark:text-red-400">⚠️ {t('no_doctors_found')}</p>
                   )}
                   {doctors.length > 0 && (
-                    <p className="mt-2 text-sm text-green-600 dark:text-green-400">✓ {doctors.length} doctor(s) available</p>
+                    <p className="mt-2 text-sm text-green-600 dark:text-green-400">✓ {t('doctors_available', doctors.length)}</p>
                   )}
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">
-                    Appointment Date & Time
+                    {t('appointment_datetime')}
                   </label>
                   <input
                     type="datetime-local"
@@ -492,7 +601,7 @@ export default function PatientDashboard() {
           </div>
 
           {/* Upload Reports Card */}
-          <div className="card card-hover" data-aos="fade-up" data-aos-delay="100">
+          <div className="card card-hover">
             <div className="flex items-center space-x-2 mb-6">
               <i data-lucide="upload" className="w-5 h-5 text-teal-600"></i>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('upload_reports')}</h2>
@@ -527,24 +636,25 @@ export default function PatientDashboard() {
               <div className="mt-4">
                 <img
                   src={ocrImage}
-                  alt="Preview"
+                  alt={t('preview_alt')}
                   className="w-32 h-32 object-cover rounded-lg border mx-auto mb-4"
                 />
                 <textarea
                   className="w-full h-40 border border-gray-300 dark:border-slate-600 rounded-lg p-3 text-sm bg-gray-50 dark:bg-slate-800 dark:text-white"
                   value={ocrText}
                   readOnly
-                  placeholder="OCR text will appear here..."
+                  placeholder={t('ocr_placeholder')}
                 />
               </div>
             )}
+
           </div>
         </div>
 
         {/* Right Column - Status and Monitoring */}
         <div className="space-y-8">
           {/* Current Appointments */}
-          <div className="card card-hover" data-aos="fade-left">
+          <div className="card card-hover">
             <div className="flex items-center space-x-2 mb-6">
               <i data-lucide="clock" className="w-5 h-5 text-teal-600"></i>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('current_appointments')}</h2>
@@ -555,15 +665,15 @@ export default function PatientDashboard() {
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
                       <p className="font-medium text-gray-900 dark:text-white">
-                        {a.doctor?.name || "Doctor"}
+                        {a.doctor?.name || t('doctor_fallback')}
                       </p>
                       <p className="text-sm text-gray-600 dark:text-slate-300">{a.reason}</p>
                       <p className="text-sm text-gray-600 dark:text-slate-300">
-                        Severity: {"●".repeat(a.severity || 0)}
+                        {t('severity')}: {"●".repeat(a.severity || 0)}
                       </p>
                     </div>
                     <span className="text-xs px-2 py-1 bg-teal-100 text-teal-700 rounded-full capitalize">
-                      {a.status}
+                      {translateStatus(a.status)}
                     </span>
                   </div>
                   <p className="text-sm text-teal-600 font-medium">
@@ -579,7 +689,7 @@ export default function PatientDashboard() {
                           className="w-full btn-primary text-sm flex items-center justify-center"
                         >
                           <i data-lucide="video" className="w-4 h-4 mr-2"></i>
-                          Join Video Call
+                          {t('join_video_call')}
                         </button>
                       ) : (
                         <a
@@ -589,7 +699,7 @@ export default function PatientDashboard() {
                           className="w-full btn-primary text-sm flex items-center justify-center"
                         >
                           <i data-lucide="external-link" className="w-4 h-4 mr-2"></i>
-                          Join Meeting
+                          {t('join_meeting')}
                         </a>
                       )}
                     </div>
@@ -603,7 +713,7 @@ export default function PatientDashboard() {
           </div>
 
           {/* History */}
-          <div className="card card-hover" data-aos="fade-left" data-aos-delay="100">
+          <div className="card card-hover">
             <div className="flex items-center space-x-2 mb-6">
               <i data-lucide="history" className="w-5 h-5 text-teal-600"></i>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('history')}</h2>
@@ -614,12 +724,12 @@ export default function PatientDashboard() {
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
                       <p className="font-medium text-gray-900 dark:text-white">
-                        {a.doctor?.name || "Doctor"}
+                        {a.doctor?.name || t('doctor_fallback')}
                       </p>
                       <p className="text-sm text-gray-600 dark:text-slate-300">{a.reason}</p>
                     </div>
                     <span className="text-xs px-2 py-1 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-full capitalize">
-                      {a.status}
+                      {translateStatus(a.status)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500 dark:text-slate-400">
@@ -633,14 +743,6 @@ export default function PatientDashboard() {
             </div>
           </div>
 
-          {/* Heart Rate Monitor */}
-          <div className="card card-hover" data-aos="fade-left" data-aos-delay="200">
-            <div className="flex items-center space-x-2 mb-6">
-              <i data-lucide="heart" className="w-5 h-5 text-teal-600"></i>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('heart_rate')}</h2>
-            </div>
-            <canvas ref={heartChartRef} height="200"></canvas>
-          </div>
         </div>
       </div>
 
@@ -660,7 +762,7 @@ export default function PatientDashboard() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                      Video Call with Dr. {appt.doctor?.name || "Doctor"}
+                      {t('video_call_with', appt.doctor?.name)}
                     </h3>
                     <p className="text-sm text-gray-600 dark:text-slate-400">{appt.reason}</p>
                   </div>
@@ -679,7 +781,7 @@ export default function PatientDashboard() {
                   src={`https://meet.jit.si/${room}`}
                   allow="camera; microphone; fullscreen; display-capture"
                   className="w-full h-full border-0"
-                  title="Video Call"
+                  title={t('video_call_title')}
                 />
               </div>
               
@@ -687,7 +789,7 @@ export default function PatientDashboard() {
               <div className="p-4 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
                 <p className="text-sm text-gray-600 dark:text-slate-400 text-center">
                   <i data-lucide="info" className="w-4 h-4 inline mr-1"></i>
-                  The call will be ended when you close this window
+                  {t('call_close_hint')}
                 </p>
               </div>
             </div>
@@ -701,7 +803,6 @@ export default function PatientDashboard() {
           className={`fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg ${
             message.includes('success') ? 'bg-green-500' : 'bg-teal-600'
           } text-white font-medium`}
-          data-aos="fade-up"
         >
           {message}
         </div>

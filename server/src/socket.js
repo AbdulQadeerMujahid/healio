@@ -1,11 +1,21 @@
 const { Server } = require('socket.io');
 
+// Store latest vitals in memory
+let latestVitals = { temperature: 36.8, bpm: 80, status: 'NORMAL' };
+
+function setLatestVitals(vitals) {
+  latestVitals = { ...latestVitals, ...vitals };
+}
+
 function initSocket(httpServer, corsOrigin) {
   const io = new Server(httpServer, {
-    cors: { origin: corsOrigin, methods: ['GET', 'POST', 'PATCH'] }
+    cors: { origin: '*', methods: ['GET', 'POST', 'PATCH'] }
   });
 
   io.on('connection', (socket) => {
+    // Send immediate latest data on connection
+    socket.emit('vitalsUpdate', latestVitals);
+
     // client should emit 'join' with { userId, role }
     socket.on('join', ({ userId, role }) => {
       if (!userId) return;
@@ -17,7 +27,7 @@ function initSocket(httpServer, corsOrigin) {
     socket.on('disconnect', () => {});
   });
 
-  return io;
+  return { io, setLatestVitals };
 }
 
 module.exports = initSocket;

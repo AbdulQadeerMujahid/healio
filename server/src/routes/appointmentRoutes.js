@@ -5,7 +5,7 @@ const { listDoctors, createAppointment, myAppointments, updateAppointmentStatus,
 router.get('/doctors', authRequired, listDoctors);
 router.post('/', authRequired, requireRole('patient'), createAppointment);
 router.get('/me', authRequired, myAppointments);
-router.patch('/:id', authRequired, requireRole('doctor'), updateAppointmentStatus);
+router.patch('/:id', authRequired, updateAppointmentStatus);
 router.post('/:id/notes', authRequired, requireRole('doctor'), addAppointmentNote);
 router.get('/:id/messages', authRequired, getMessages);
 router.post('/:id/messages', authRequired, sendMessage);

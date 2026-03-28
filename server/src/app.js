@@ -25,11 +25,11 @@ app.get('/', (_req, res) => res.json({ status: 'API OK', timestamp: new Date().t
 // Connect to database before handling requests
 app.use(async (req, res, next) => {
   try {
-    await connectToDatabase(process.env.MONGO_URI || process.env.MONGODB_URI);
+    await connectToDatabase();
     next();
   } catch (error) {
     console.error('Database connection error:', error);
-    res.status(500).json({ message: 'Database connection failed' });
+    res.status(500).json({ message: 'Database connection failed (Supabase)' });
   }
 });
 
@@ -42,6 +42,21 @@ app.use((req, res, next) => {
     })
   };
   next();
+});
+
+// Vitals Mock DB (for Arduino Demo)
+let latestVitals = { temperature: 36.8, bpm: 80, status: 'NORMAL' };
+
+app.post('/data', (req, res) => {
+  const { temperature, bpm, status } = req.body;
+  if(temperature && bpm) {
+    latestVitals = { temperature, bpm, status: status || 'NORMAL' };
+  }
+  res.status(200).json({ success: true, received: true });
+});
+
+app.get('/api/vitals', (req, res) => {
+  res.json(latestVitals);
 });
 
 // Routes

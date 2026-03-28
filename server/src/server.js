@@ -21,10 +21,24 @@ app.use(cors({ origin: corsOrigin }));
 
 // HTTP + Socket.IO
 const server = http.createServer(app);
-const io = initSocket(server, corsOrigin);
+const { io, setLatestVitals } = initSocket(server, '*'); // Allow all origins explicitly
 
 // expose io to routes
 app.use((req, _res, next) => { req.io = io; next(); });
+
+// Handle ESP32 Data
+app.post('/data', (req, res) => {
+  const { temperature, bpm, status } = req.body;
+  
+  if (temperature && bpm) {
+    const vitals = { temperature, bpm, status: status || 'NORMAL' };
+    setLatestVitals(vitals);
+    io.emit('vitalsUpdate', vitals);
+    console.log('📡 Live ESP32 Data:', vitals);
+  }
+  
+  res.status(200).json({ success: true, received: true });
+});
 
 app.get('/', (_req, res) => res.send('API OK'));
 
@@ -36,6 +50,6 @@ app.use('/api/notifications', notificationRoutes);
 
 // DB + start
 const PORT = process.env.PORT || 5000;
-connectDB(process.env.MONGO_URI).then(() => {
+connectDB().then(() => {
   server.listen(PORT, () => console.log(`Server listening on ${PORT}`));
 });
