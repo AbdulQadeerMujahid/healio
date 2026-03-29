@@ -9,6 +9,7 @@ const apptRoutes = require('./routes/appointmentRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const patientNoteRoutes = require('./routes/patientNoteRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const { getLatestData } = require('./serial');
 
 const app = express();
 
@@ -21,6 +22,16 @@ app.use(cors({ origin: corsOrigin }));
 
 // Health check
 app.get('/', (_req, res) => res.json({ status: 'API OK', timestamp: new Date().toISOString() }));
+
+
+//read from arduino
+app.get('/sensor-data', (req, res) => {
+  res.json(getLatestData());
+});
+
+app.get('/api/sensor-data', (req, res) => {
+  res.json(getLatestData());
+});
 
 // Connect to database before handling requests
 app.use(async (req, res, next) => {

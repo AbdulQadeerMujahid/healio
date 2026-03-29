@@ -9,12 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
     "chart.js": "^4.5.0",
     "lucide": "^1.7.0",
+    "pdfjs-dist": "^5.5.207",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "recharts": "^3.1.2",
+    "serialport": "^13.0.0",
     "socket.io-client": "^4.8.3",
     "tesseract.js": "^6.0.1"
   },

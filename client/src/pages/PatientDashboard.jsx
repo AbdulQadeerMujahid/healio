@@ -1,6 +1,83 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLanguage } from "../context/LanguageContext";
 import Tesseract from "tesseract.js";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import * as pdfjsLib from "pdfjs-dist";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
+
+const ALERT_COOLDOWN_MS = 60 * 1000;
+
+const buildClientAssessment = (bpm, temperature) => {
+  let score = 1;
+
+  if (bpm >= 140 || bpm <= 45) score += 3;
+  else if (bpm >= 125 || bpm <= 50) score += 2;
+  else if (bpm >= 115 || bpm <= 55) score += 1;
+
+  if (temperature >= 39 || temperature <= 35) score += 3;
+  else if (temperature >= 38 || temperature <= 35.5) score += 2;
+  else if (temperature >= 37.5 || temperature <= 36) score += 1;
+
+  const severity = Math.max(1, Math.min(5, score));
+  let risk = "low";
+  if (severity >= 5) risk = "critical";
+  else if (severity >= 4) risk = "high";
+  else if (severity >= 3) risk = "moderate";
+
+  let recommendation = "Continue monitoring and hydration.";
+  if (risk === "critical") recommendation = "Immediate doctor intervention recommended. Consider emergency care.";
+  else if (risk === "high") recommendation = "Doctor review is required urgently within minutes.";
+  else if (risk === "moderate") recommendation = "Doctor review advised soon and increase monitoring frequency.";
+
+  return { severity, risk, recommendation };
+};
+
+const buildSyntheticEcgSignal = (bpm, temperature, index) => {
+  const safeBpm = Number.isFinite(bpm) && bpm > 0 ? bpm : 75;
+  const safeTemp = Number.isFinite(temperature) ? temperature : 36.8;
+
+  const cycle = Math.max(18, Math.floor(3000 / safeBpm));
+  const phase = index % cycle;
+
+  let base = 18 + Math.sin(index / 10) * 2;
+  if (phase > cycle * 0.12 && phase < cycle * 0.2) base += 10;
+  if (phase > cycle * 0.4 && phase < cycle * 0.42) base -= 14;
+  if (phase >= cycle * 0.42 && phase < cycle * 0.46) base += 52;
+  if (phase >= cycle * 0.46 && phase < cycle * 0.5) base -= 20;
+  if (phase > cycle * 0.68 && phase < cycle * 0.82) base += 14;
+
+  const tempShift = (safeTemp - 36.8) * 2;
+  const noise = Math.sin(index / 3) * 0.8;
+
+  return Number((base + tempShift + noise).toFixed(2));
+};
+
+const OCR_SYMPTOM_PATTERNS = [
+  { symptom: "Fever", pattern: /\b(fever|temperature|pyrexia)\b/i },
+  { symptom: "Cough", pattern: /\b(cough|coughing)\b/i },
+  { symptom: "Breathlessness", pattern: /\b(shortness of breath|breathless|dyspnea)\b/i },
+  { symptom: "Chest Pain", pattern: /\b(chest pain|angina|chest discomfort)\b/i },
+  { symptom: "Headache", pattern: /\b(headache|migraine)\b/i },
+  { symptom: "Dizziness", pattern: /\b(dizziness|vertigo|lightheaded)\b/i },
+  { symptom: "Fatigue", pattern: /\b(fatigue|tiredness|weakness)\b/i },
+  { symptom: "Nausea", pattern: /\b(nausea|vomiting|emesis)\b/i },
+  { symptom: "Sore Throat", pattern: /\b(sore throat|throat pain)\b/i },
+  { symptom: "High Blood Pressure", pattern: /\b(hypertension|high blood pressure|bp high)\b/i },
+  { symptom: "High Blood Sugar", pattern: /\b(hyperglycemia|high sugar|diabetes|blood sugar high)\b/i },
+];
+
+const detectSymptomsFromText = (text) => {
+  const source = String(text || "");
+  if (!source.trim()) return [];
+
+  return OCR_SYMPTOM_PATTERNS
+    .filter((item) => item.pattern.test(source))
+    .map((item) => item.symptom);
+};
 
 // Auto-detect API URL for both development and production
 const getApiUrl = () => {
@@ -31,6 +108,10 @@ export default function PatientDashboard() {
   const [message, setMessage] = useState("");
   const [ocrText, setOcrText] = useState("");
   const [ocrImage, setOcrImage] = useState(null);
+  const [ocrFileType, setOcrFileType] = useState("");
+  const [ocrSymptoms, setOcrSymptoms] = useState([]);
+  const [ocrProcessing, setOcrProcessing] = useState(false);
+  const [ocrShareStatus, setOcrShareStatus] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(new Date().toISOString());
   const [openCall, setOpenCall] = useState(null); // For video call modal
@@ -38,6 +119,18 @@ export default function PatientDashboard() {
   const [latestHeartRate, setLatestHeartRate] = useState(80);
   const [latestTemperature, setLatestTemperature] = useState(36.8);
   const [vitalsStatus, setVitalsStatus] = useState("NORMAL");
+  const [ecgData, setEcgData] = useState([]);
+  const [clinicalAssessment, setClinicalAssessment] = useState(() =>
+    buildClientAssessment(80, 36.8)
+  );
+  const [lastAutoReportAt, setLastAutoReportAt] = useState(null);
+
+  const alertShownRef = useRef(false);
+  const hasAlertedRef = useRef(false);
+  const lastEscalationAtRef = useRef(0);
+  const appointmentsRef = useRef([]);
+  const ecgSnapshotRef = useRef([]);
+  const sampleIndexRef = useRef(0);
 
   const i18n = {
     en: {
@@ -58,6 +151,10 @@ export default function PatientDashboard() {
       heart_rate: "Heart Rate Monitor",
       latest_heart_rate: "Latest Heart Rate",
       current_temperature: "Current Temperature",
+      ecg_graph: "Live ECG Graph",
+      risk_level: "Risk Level",
+      recommendation: "Recommendation",
+      auto_report_generated: "Automated alert report generated",
       no_current: "No current appointments.",
       no_history: "No appointment history yet.",
       language: "Language",
@@ -82,6 +179,12 @@ export default function PatientDashboard() {
       join_video_call: "Join Video Call",
       join_meeting: "Join Meeting",
       ocr_placeholder: "OCR text will appear here...",
+      ocr_feature_highlight: "OCR Feature: Upload PDF/image reports to auto-detect symptoms and auto-share insights with your booked doctor.",
+      ocr_processing: "Processing report with OCR...",
+      ocr_detected_symptoms: "Detected Symptoms",
+      ocr_no_symptoms: "No clear symptoms detected from OCR text.",
+      ocr_shared_to_doctor: "OCR summary shared with your booked doctor.",
+      ocr_no_appointment_to_share: "No active booked appointment found to share OCR summary.",
       preview_alt: "Preview",
       video_call_with: (name) => `Video Call with Dr. ${name || 'Doctor'}`,
       video_call_title: "Video Call",
@@ -224,48 +327,106 @@ export default function PatientDashboard() {
     }
   };
 
-  // Real-time Vitals via Socket.IO
   useEffect(() => {
-    let socket;
-    let hasAlerted = false; // Prevent spamming alerts
-    let isMounted = true;
+    appointmentsRef.current = Array.isArray(appointments) ? appointments : [];
+  }, [appointments]);
 
-    import("socket.io-client").then(({ io }) => {
-      if (!isMounted) return;
-      
-      // Connect to the base API URL (e.g., http://192.168.0.115:5000)
-      const socketUrl = API.includes('/api') ? API.replace('/api', '') : "http://192.168.0.115:5000";
-      socket = io(socketUrl);
-      
-      socket.on("connect", () => {
-        console.log("🟢 Connected to live Vitals Stream");
+  const escalateAlertToBackend = async ({ bpm, temperature }) => {
+    try {
+      const res = await fetch(`${API}/appointments/alerts/escalate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token()}`,
+        },
+        body: JSON.stringify({
+          bpm,
+          temperature,
+          ecgSeries: ecgSnapshotRef.current.slice(-80),
+        }),
       });
 
-      socket.on("vitalsUpdate", (data) => {
-        console.log("⚡ Live Update Received:", data);
-        
-        const isAlertState = Number(data.bpm) > 100 || data.status === "ALERT";
-        setLatestTemperature(data.temperature);
-        setLatestHeartRate(data.bpm);
-        setVitalsStatus(isAlertState ? "ALERT" : "NORMAL");
-        
-        // Bonus: Alert popup logic mapped
-        if (isAlertState && !hasAlerted) {
-          hasAlerted = true; // Lock alert
-          setTimeout(() => {
-             alert(`⚠️ HEALTH ALERT:\nBPM: ${data.bpm}\nTemp: ${data.temperature}°C\nStatus: ${data.status}\n\nPlease take immediate precautions!`);
-          }, 100); 
-        } else if (!isAlertState) {
-          hasAlerted = false; // reset alert
-        }
-      });
-    });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Alert escalation failed:", errText);
+        return null;
+      }
 
-    return () => {
-      isMounted = false;
-      if (socket) socket.disconnect();
-    };
-  }, [API]);
+      const payload = await res.json();
+      if (payload?.assessment) {
+        setClinicalAssessment(payload.assessment);
+      }
+      if (payload?.report) {
+        setLastAutoReportAt(new Date().toISOString());
+        setMessage(`${t('auto_report_generated')}: ${payload.report.fileName}`);
+      }
+
+      await fetchData();
+      return payload;
+    } catch (err) {
+      console.error("Alert escalation network error:", err);
+      return null;
+    }
+  };
+
+// ✅ NEW: Fetch sensor data from serial API
+useEffect(() => {
+  const fetchSensorData = async () => {
+    try {
+      const res = await fetch(`${API}/sensor-data`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      console.log("📡 Sensor Data:", data);
+
+      const isAlertState =
+        Number(data.bpm) > 120 || Number(data.temp) > 30;
+
+      const bpm = Number(data.bpm) || 0;
+      const temp = Number(data.temp) || 0;
+      const nextIndex = sampleIndexRef.current + 1;
+      sampleIndexRef.current = nextIndex;
+      const signal = buildSyntheticEcgSignal(bpm, temp, nextIndex);
+
+      setLatestTemperature(data.temp);
+      setLatestHeartRate(data.bpm);
+      setVitalsStatus(isAlertState ? "ALERT" : "NORMAL");
+      setEcgData((prev) => {
+        const next = [
+          ...prev,
+          {
+            idx: nextIndex,
+            signal,
+            bpm,
+            temp,
+            time: new Date().toLocaleTimeString(),
+          },
+        ].slice(-120);
+        ecgSnapshotRef.current = next;
+        return next;
+      });
+
+      // 🚨 Alert popup
+      if (isAlertState && !hasAlertedRef.current) {
+        hasAlertedRef.current = true;
+        alert(
+          `⚠️ HEALTH ALERT:\nBPM: ${data.bpm}\nTemp: ${data.temp}°C`
+        );
+      } else if (!isAlertState) {
+        hasAlertedRef.current = false;
+      }
+
+    } catch (err) {
+      console.log("Sensor fetch error:", err);
+    }
+  };
+
+  // fetch immediately, then poll every second
+  fetchSensorData();
+  const interval = setInterval(fetchSensorData, 500);
+
+  return () => clearInterval(interval);
+}, []);
 
   // Polling for updates (replaces Socket.IO)
   useEffect(() => {
@@ -311,15 +472,110 @@ export default function PatientDashboard() {
     return () => clearInterval(pollInterval);
   }, [lastUpdate, lang]);
 
+  const extractTextFromPdf = async (file) => {
+    const buffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+    const pdf = await loadingTask.promise;
+
+    const pages = [];
+    const maxPages = Math.min(pdf.numPages, 5);
+
+    for (let i = 1; i <= maxPages; i += 1) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({ canvasContext: context, viewport }).promise;
+      const { data } = await Tesseract.recognize(canvas, "eng");
+      pages.push(data?.text || "");
+    }
+
+    return pages.join("\n");
+  };
+
+  const autoShareOcrWithDoctor = async (symptoms, fullText, fileName) => {
+    const active = (Array.isArray(appointments) ? appointments : []).find(
+      (item) =>
+        item?.doctor?._id &&
+        (item.status === "pending" || item.status === "accepted" || item.status === "rescheduled")
+    );
+
+    if (!active?._id) {
+      setOcrShareStatus(t("ocr_no_appointment_to_share"));
+      return;
+    }
+
+    const symptomLine = symptoms.length ? symptoms.join(", ") : "No clear symptom keyword matched";
+    const summaryText = String(fullText || "").replace(/\s+/g, " ").slice(0, 450);
+    const doctorMessage = [
+      `OCR AUTO-SHARE from patient (${fileName}):`,
+      `Detected symptoms: ${symptomLine}`,
+      `Extracted summary: ${summaryText || "No OCR text captured"}`,
+    ].join("\n");
+
+    const shareRes = await fetch(`${API}/appointments/${active._id}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token()}`,
+      },
+      body: JSON.stringify({ text: doctorMessage }),
+    });
+
+    if (shareRes.ok) {
+      setOcrShareStatus(t("ocr_shared_to_doctor"));
+    } else {
+      setOcrShareStatus(t("failed"));
+    }
+  };
+
+  const processUploadedReport = async (file) => {
+    if (!file) return;
+
+    setOcrProcessing(true);
+    setOcrShareStatus("");
+    setOcrText("");
+    setOcrSymptoms([]);
+    setOcrFileType(file.type || "");
+
+    try {
+      const isPdf = file.type === "application/pdf";
+      if (!isPdf) {
+        setOcrImage(URL.createObjectURL(file));
+      } else {
+        setOcrImage(null);
+      }
+
+      let text = "";
+      if (isPdf) {
+        text = await extractTextFromPdf(file);
+      } else {
+        const result = await Tesseract.recognize(file, "eng");
+        text = result?.data?.text || "";
+      }
+
+      setOcrText(text);
+
+      const symptoms = detectSymptomsFromText(text);
+      setOcrSymptoms(symptoms);
+
+      await autoShareOcrWithDoctor(symptoms, text, file.name || "report");
+    } catch (err) {
+      console.error("OCR processing error:", err);
+      setOcrShareStatus(t("network_error"));
+    } finally {
+      setOcrProcessing(false);
+    }
+  };
+
   // File handling
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setOcrImage(URL.createObjectURL(file));
-      Tesseract.recognize(file, "eng").then(({ data: { text } }) => {
-        setOcrText(text);
-      });
-    }
+    processUploadedReport(file);
   };
 
   const handleDrag = (e) => {
@@ -339,10 +595,7 @@ export default function PatientDashboard() {
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
-      setOcrImage(URL.createObjectURL(file));
-      Tesseract.recognize(file, "eng").then(({ data: { text } }) => {
-        setOcrText(text);
-      });
+      processUploadedReport(file);
     }
   };
 
@@ -478,6 +731,31 @@ export default function PatientDashboard() {
             <p className={`text-3xl font-bold ${vitalsStatus === 'ALERT' ? 'text-red-800 dark:text-red-200 animate-pulse' : 'text-orange-800 dark:text-orange-200'}`}>{latestTemperature}°C</p>
           </div>
         </div>
+
+        <div className="mt-4 rounded-lg border border-sky-100 dark:border-sky-900/40 bg-sky-50 dark:bg-sky-900/20 px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-sky-700 dark:text-sky-300 mb-2">{t('ecg_graph')}</p>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={ecgData} margin={{ top: 8, right: 60, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(14, 116, 144, 0.2)" />
+                <XAxis dataKey="idx" hide />
+                <YAxis yAxisId="left" domain={[40, 160]} label={{ value: 'BPM', angle: -90, position: 'insideLeft', style: { fontSize: '12px', fill: 'rgba(14, 116, 144, 0.7)' } }} />
+                <YAxis yAxisId="right" orientation="right" domain={[34, 40]} label={{ value: '°C', angle: 90, position: 'insideRight', style: { fontSize: '12px', fill: 'rgba(249, 115, 22, 0.7)' } }} />
+                <Tooltip
+                  formatter={(value, key) => {
+                    if (key === 'bpm') return [`${value} BPM`, 'Heart Rate'];
+                    if (key === 'temp') return [`${value.toFixed(1)}°C`, 'Temperature'];
+                    return [value, key];
+                  }}
+                  labelFormatter={(_label, payload) => payload?.[0]?.payload?.time || ''}
+                />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="bpm" stroke="#0ea5e9" strokeWidth={2.5} dot={false} isAnimationActive={false} name="Heart Rate (BPM)" />
+                <Line yAxisId="right" type="monotone" dataKey="temp" stroke="#f97316" strokeWidth={2.5} dot={false} isAnimationActive={false} name="Temperature (°C)" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -607,6 +885,12 @@ export default function PatientDashboard() {
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('upload_reports')}</h2>
             </div>
 
+            <div className="mb-4 rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/25 px-4 py-3">
+              <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">
+                {t('ocr_feature_highlight')}
+              </p>
+            </div>
+
             <div
               className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
                 dragActive
@@ -632,6 +916,34 @@ export default function PatientDashboard() {
               </label>
             </div>
 
+            {ocrProcessing && (
+              <p className="mt-3 text-sm text-teal-700 dark:text-teal-300">{t('ocr_processing')}</p>
+            )}
+
+            {!ocrProcessing && ocrSymptoms.length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">{t('ocr_detected_symptoms')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {ocrSymptoms.map((symptom) => (
+                    <span
+                      key={symptom}
+                      className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+                    >
+                      {symptom}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!ocrProcessing && ocrText && ocrSymptoms.length === 0 && (
+              <p className="mt-3 text-sm text-gray-600 dark:text-slate-300">{t('ocr_no_symptoms')}</p>
+            )}
+
+            {!!ocrShareStatus && (
+              <p className="mt-3 text-sm text-teal-700 dark:text-teal-300">{ocrShareStatus}</p>
+            )}
+
             {ocrImage && (
               <div className="mt-4">
                 <img
@@ -639,6 +951,20 @@ export default function PatientDashboard() {
                   alt={t('preview_alt')}
                   className="w-32 h-32 object-cover rounded-lg border mx-auto mb-4"
                 />
+                <textarea
+                  className="w-full h-40 border border-gray-300 dark:border-slate-600 rounded-lg p-3 text-sm bg-gray-50 dark:bg-slate-800 dark:text-white"
+                  value={ocrText}
+                  readOnly
+                  placeholder={t('ocr_placeholder')}
+                />
+              </div>
+            )}
+
+            {!ocrImage && ocrFileType === 'application/pdf' && (
+              <div className="mt-4">
+                <div className="w-32 h-32 rounded-lg border mx-auto mb-4 flex items-center justify-center bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-slate-200 text-sm font-semibold">
+                  PDF
+                </div>
                 <textarea
                   className="w-full h-40 border border-gray-300 dark:border-slate-600 rounded-lg p-3 text-sm bg-gray-50 dark:bg-slate-800 dark:text-white"
                   value={ocrText}

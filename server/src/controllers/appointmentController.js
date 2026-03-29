@@ -32,6 +32,46 @@ async function fetchAppointmentById(supabase, appointmentId) {
   return data;
 }
 
+function buildAlertAssessment({ bpm, temperature }) {
+  let score = 1;
+
+  if (bpm >= 140 || bpm <= 45) score += 3;
+  else if (bpm >= 125 || bpm <= 50) score += 2;
+  else if (bpm >= 115 || bpm <= 55) score += 1;
+
+  if (temperature >= 39 || temperature <= 35) score += 3;
+  else if (temperature >= 38 || temperature <= 35.5) score += 2;
+  else if (temperature >= 37.5 || temperature <= 36) score += 1;
+
+  const severity = Math.max(1, Math.min(5, score));
+
+  let risk = 'low';
+  if (severity >= 5) risk = 'critical';
+  else if (severity >= 4) risk = 'high';
+  else if (severity >= 3) risk = 'moderate';
+
+  let recommendation = 'Continue monitoring and hydration.';
+  if (risk === 'critical') recommendation = 'Immediate doctor intervention recommended. Consider emergency care.';
+  else if (risk === 'high') recommendation = 'Doctor review is required urgently within minutes.';
+  else if (risk === 'moderate') recommendation = 'Doctor review advised soon and increase monitoring frequency.';
+
+  return { severity, risk, recommendation };
+}
+
+async function fetchActiveAppointment(supabase, patientId) {
+  const { data, error } = await supabase
+    .from('appointments')
+    .select(APPOINTMENT_SELECT)
+    .eq('patient_id', patientId)
+    .in('status', ['pending', 'accepted', 'rescheduled'])
+    .order('datetime', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
 exports.listDoctors = async (req, res) => {
   try {
     const supabase = getSupabaseAdmin();
@@ -376,6 +416,128 @@ exports.sendMessage = async (req, res) => {
     res.json(updated);
   } catch (err) {
     console.error('Send message error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+exports.escalateVitalsAlert = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const bpm = Number(req.body?.bpm);
+    const temperature = Number(req.body?.temperature ?? req.body?.temp);
+    const ecgSeries = Array.isArray(req.body?.ecgSeries) ? req.body.ecgSeries.slice(-120) : [];
+
+    if (!Number.isFinite(bpm) || !Number.isFinite(temperature)) {
+      return res.status(400).json({ message: 'Valid bpm and temperature are required' });
+    }
+
+    const assessment = buildAlertAssessment({ bpm, temperature });
+    const nowIso = new Date().toISOString();
+
+    const activeAppointment = await fetchActiveAppointment(supabase, req.user.id);
+    let updatedAppointment = null;
+
+    if (activeAppointment) {
+      const currentSeverity = Number(activeAppointment.severity || 1);
+      const escalatedSeverity = Math.max(currentSeverity, assessment.severity);
+
+      const notes = Array.isArray(activeAppointment.notes) ? [...activeAppointment.notes] : [];
+      notes.push({
+        _id: randomUUID(),
+        author: req.user.id,
+        text: `AUTO-ALERT (${assessment.risk.toUpperCase()}): BPM ${bpm}, Temp ${temperature}. Severity adjusted to ${escalatedSeverity}. ${assessment.recommendation}`,
+        createdAt: nowIso,
+      });
+
+      const { data: updatedRow, error: updateError } = await supabase
+        .from('appointments')
+        .update({ severity: escalatedSeverity, notes })
+        .eq('id', activeAppointment.id)
+        .select(APPOINTMENT_SELECT)
+        .single();
+
+      if (updateError) throw updateError;
+
+      const usersById = await fetchUsersByIds(supabase, [updatedRow.patient_id, updatedRow.doctor_id]);
+      updatedAppointment = mapAppointment(updatedRow, usersById);
+
+      req.io.to(`user:${updatedAppointment.patient?._id}`).emit('appointment:update', updatedAppointment);
+      req.io.to(`user:${updatedAppointment.doctor?._id}`).emit('appointment:update', updatedAppointment);
+
+      if (updatedAppointment?.doctor?._id) {
+        const { data: notificationRow, error: notificationError } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: updatedAppointment.doctor._id,
+            type: 'critical_alert',
+            title: `Patient alert: ${req.user.name || 'Patient'}`,
+            body: `BPM ${bpm}, Temp ${temperature}C, Severity ${Math.max(currentSeverity, assessment.severity)} (${assessment.risk}).`,
+            data: {
+              appointmentId: updatedAppointment._id,
+              patientId: req.user.id,
+              bpm,
+              temperature,
+              risk: assessment.risk,
+            },
+            read: false,
+          })
+          .select('*')
+          .single();
+
+        if (notificationError) throw notificationError;
+        req.io.to(`user:${updatedAppointment.doctor._id}`).emit('notification:new', mapNotification(notificationRow));
+      }
+    }
+
+    const reportPayload = {
+      generatedAt: nowIso,
+      patient: { id: req.user.id, name: req.user.name || null },
+      vitals: { bpm, temperature },
+      assessment,
+      appointmentId: updatedAppointment?._id || null,
+      ecgSeries,
+    };
+
+    const reportJson = JSON.stringify(reportPayload, null, 2);
+
+    const { data: insertedReport, error: reportError } = await supabase
+      .from('reports')
+      .insert({
+        patient_id: req.user.id,
+        title: `Automated Vitals Alert - ${new Date().toLocaleString()}`,
+        description: `Risk: ${assessment.risk.toUpperCase()}. ${assessment.recommendation}`,
+        report_type: 'other',
+        file_data: Buffer.from(reportJson, 'utf8').toString('base64'),
+        file_name: `vitals-alert-${Date.now()}.json`,
+        file_type: 'application/json',
+        file_size: Buffer.byteLength(reportJson, 'utf8'),
+        uploaded_by: req.user.id,
+        appointment_id: updatedAppointment?._id || null,
+        date: nowIso,
+      })
+      .select('id, title, description, report_type, file_name, file_type, file_size, appointment_id, created_at')
+      .single();
+
+    if (reportError) throw reportError;
+
+    res.json({
+      ok: true,
+      assessment,
+      appointment: updatedAppointment,
+      report: {
+        _id: insertedReport.id,
+        title: insertedReport.title,
+        description: insertedReport.description,
+        reportType: insertedReport.report_type,
+        fileName: insertedReport.file_name,
+        fileType: insertedReport.file_type,
+        fileSize: insertedReport.file_size,
+        appointment: insertedReport.appointment_id,
+        createdAt: insertedReport.created_at,
+      },
+    });
+  } catch (err) {
+    console.error('Escalate vitals alert error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

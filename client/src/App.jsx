@@ -102,10 +102,69 @@ export default function App() {
   };
   
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "system");
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [newAppointmentCount, setNewAppointmentCount] = useState(0);
   const { lang } = useLanguage();
 
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Fetch unread messages and new appointments count
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchNotificationCounts = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const apiBase = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app') 
+          ? window.location.origin 
+          : 'http://localhost:5000';
+        const res = await fetch(
+          `${apiBase}/api/appointments`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) return;
+        const appointments = await res.json();
+        
+        const seenMessages = JSON.parse(localStorage.getItem('seenMessages') || '{}');
+        const viewedAppointments = JSON.parse(localStorage.getItem('viewedAppointments') || '{}');
+        const userId = user?.id;
+        const userSeenMessages = seenMessages[userId] || {};
+        const userViewedAppointments = viewedAppointments[userId] || [];
+        
+        // Count unread messages
+        let totalUnseen = 0;
+        // Count new appointments
+        let newAptCount = 0;
+        
+        appointments.forEach(apt => {
+          // Count unread messages in this appointment
+          const messages = apt.messages || [];
+          const seenIds = userSeenMessages[apt._id] || [];
+          const unseenCount = messages.filter(msg => {
+            const isMyMessage = msg.author?._id === userId;
+            const isSeen = seenIds.includes(msg.createdAt || msg._id);
+            return !isMyMessage && !isSeen;
+          }).length;
+          totalUnseen += unseenCount;
+          
+          // Count new appointments (pending status and not yet viewed)
+          if (apt.status === 'pending' && !userViewedAppointments.includes(apt._id)) {
+            newAptCount += 1;
+          }
+        });
+        
+        setUnreadMessageCount(totalUnseen);
+        setNewAppointmentCount(newAptCount);
+      } catch (err) {
+        console.log('Error fetching notification counts:', err);
+      }
+    };
+
+    fetchNotificationCounts();
+    const interval = setInterval(fetchNotificationCounts, 5000); // Update every 5 seconds
+    return () => clearInterval(interval);
+  }, [user]);
 
   // Apply theme to html element and watch system preference
   useEffect(() => {
@@ -301,8 +360,22 @@ export default function App() {
               }}
               className={`nav-link ${isActiveRoute(item.href) ? 'nav-link-active' : ''}`}
             >
-              <i data-lucide={item.icon} className="w-5 h-5"></i>
-              <span className="font-medium">{item.name}</span>
+              <div className="flex items-center justify-between flex-1">
+                <div className="flex items-center space-x-2">
+                  <i data-lucide={item.icon} className="w-5 h-5"></i>
+                  <span className="font-medium">{item.name}</span>
+                </div>
+                {item.name === tr.messages && unreadMessageCount > 0 && (
+                  <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white transform bg-red-600 rounded-full">
+                    {unreadMessageCount}
+                  </span>
+                )}
+                {item.name === tr.appointments && newAppointmentCount > 0 && (
+                  <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-white transform bg-red-600 rounded-full">
+                    {newAppointmentCount}
+                  </span>
+                )}
+              </div>
             </a>
           ))}
         </nav>
