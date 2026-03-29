@@ -395,6 +395,36 @@ export default function ReportsPage({ user: currentUser }) {
     return t.poor;
   };
 
+  // Function to generate formatted download filename
+  const getFormattedFilename = (report) => {
+    // Determine patient name
+    let patientName = '';
+    if (currentUser2?.role === 'patient') {
+      patientName = currentUser2?.name || 'Patient';
+    } else if (currentUser2?.role === 'doctor' && selectedPatient) {
+      patientName = selectedPatient?.name || 'Patient';
+    } else if (report.patient?.name) {
+      patientName = report.patient.name;
+    } else {
+      patientName = 'Patient';
+    }
+
+    // Clean the patient name (remove spaces, special characters)
+    const cleanPatientName = patientName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+
+    // Get report name
+    const reportName = report.title.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+
+    // Format date (YYYY-MM-DD)
+    const uploadDate = new Date(report.createdAt).toISOString().split('T')[0];
+
+    // Get file extension
+    const fileExtension = report.fileName.split('.').pop() || 'pdf';
+
+    // Combine: PatientName_ReportName_DateOfUpload.extension
+    return `${cleanPatientName}_${reportName}_${uploadDate}.${fileExtension}`;
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-8">
@@ -579,6 +609,16 @@ export default function ReportsPage({ user: currentUser }) {
                           <p className="text-xs text-gray-500 dark:text-slate-400 capitalize">{report.reportType}</p>
                         </div>
                       </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteReport(report._id);
+                        }}
+                        className="p-1 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md transition-colors"
+                        title="Delete report"
+                      >
+                        <i data-lucide="trash-2" className="w-4 h-4 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"></i>
+                      </button>
                     </div>
                     <p className="text-xs text-gray-600 dark:text-slate-400 mb-2 line-clamp-2">{report.description || 'No description'}</p>
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-slate-500">
@@ -899,7 +939,7 @@ export default function ReportsPage({ user: currentUser }) {
                 <div className="flex items-center gap-2">
                   <a
                     href={selectedReport.fileData}
-                    download={selectedReport.fileName}
+                    download={getFormattedFilename(selectedReport)}
                     className="p-2 text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-900/30 rounded-lg transition-colors"
                     title="Download"
                   >

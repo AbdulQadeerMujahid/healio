@@ -39,7 +39,31 @@ export default function AppointmentsPage({ user: currentUser }) {
 
   useEffect(() => {
     fetchAppointments();
-  }, []);
+    
+    // Mark appointments as viewed
+    const markAppointmentsAsViewed = () => {
+      const viewedAppointments = JSON.parse(localStorage.getItem('viewedAppointments') || '{}');
+      const userId = user?.id;
+      if (!userId) return;
+      
+      if (!viewedAppointments[userId]) {
+        viewedAppointments[userId] = [];
+      }
+      
+      // Mark all appointments as viewed
+      appointments.forEach(apt => {
+        if (!viewedAppointments[userId].includes(apt._id)) {
+          viewedAppointments[userId].push(apt._id);
+        }
+      });
+      
+      localStorage.setItem('viewedAppointments', JSON.stringify(viewedAppointments));
+    };
+    
+    if (appointments.length > 0) {
+      markAppointmentsAsViewed();
+    }
+  }, [appointments]);
 
   // Cancel appointment (patient only)
   const cancelAppointment = async (id) => {

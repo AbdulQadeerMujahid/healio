@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const initSocket = require('./socket');
+const { getLatestData, onSensorData } = require('./serial');
 
 const authRoutes = require('./routes/authRoutes');
 const apptRoutes = require('./routes/appointmentRoutes');
@@ -25,6 +26,26 @@ const { io, setLatestVitals } = initSocket(server, '*'); // Allow all origins ex
 
 // expose io to routes
 app.use((req, _res, next) => { req.io = io; next(); });
+
+// Live sensor endpoint for dashboard polling
+app.get('/sensor-data', (_req, res) => {
+  res.json(getLatestData());
+});
+
+app.get('/api/sensor-data', (_req, res) => {
+  res.json(getLatestData());
+});
+
+// Relay serial updates to connected dashboard clients
+onSensorData((sample) => {
+  const vitals = {
+    temperature: sample.temp,
+    bpm: sample.bpm,
+    status: sample.bpm > 120 || sample.temp > 30 ? 'ALERT' : 'NORMAL',
+  };
+  setLatestVitals(vitals);
+  io.emit('vitalsUpdate', vitals);
+});
 
 // Handle ESP32 Data
 app.post('/data', (req, res) => {
